@@ -1,3 +1,10 @@
+const config = {
+    integerIs: 'i64',
+    floatIs: 'f64',
+    trueIsBool: false,
+    useJsonValueInCaseIncludesOr: true,
+};
+
 /**
  * @typedef {object} StructFieldInfo
  * @property {string} field
@@ -127,20 +134,45 @@ function genStructDef(structInfo) {
  */
 function replaceTypeIfNeeded(type) {
     type = replaceArrayOf(type);
+    if (type.startsWith('[]')) {
+        return '[]' + replaceTypeIfNeeded(type.slice(2));
+    }
     if (type === 'Integer') {
-        return '@compileError("It\'s a Integer, choose one integer type")';
+        if (config.integerIs === null) {
+            return '@compileError("It\'s a Integer, choose one integer type")';
+        } else {
+            return config.integerIs;
+        }
+    }
+    if (type === 'Float') {
+        if (config.floatIs === null) {
+            return '@compileError("It\'s a Float, choose one float type")';
+        } else {
+            return config.floatIs;
+        }
     }
     if (type === 'Boolean') {
         return 'bool';
     }
     if (type === 'True') {
-        return '@TypeOf(true)';
+        if (config.trueIsBool) {
+            return 'bool';
+        } else {
+            return '@TypeOf(true)';
+        }
     }
     if (type === 'String') {
         return '[]u8';
     }
+    if (type === 'Integer or String') {
+        return 'integer_or_string';
+    }
     if (type.includes('or')) {
-        return '@compileError("Type name includes \'or\' not yet supported")';
+        if (config.useJsonValueInCaseIncludesOr) {
+            return 'std.json.Value';
+        } else {
+            return `@compileError("Type name includes 'or' not yet supported: '${type}'")`;
+        }
     }
     return type;
 }
@@ -160,12 +192,12 @@ function ignoreBad(info) {
             (Array.isArray(datum.fields) && datum.fields.length === 0)
             || !isGoodTypeName(datum.typeName)
         ) {
-            bad.push(index);
+            bad.push({ index, typeName: datum.typeName });
         } else {
             good.push(datum);
         }
     });
-    console.log(`Ignored ${bad.length} bad data, they are ${bad}`);
+    console.log(`Ignored ${bad.length} bad data, they are ${bad.map(b => `${b.index}:${b.typeName}`)}`);
     return good;
 }
 
