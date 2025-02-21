@@ -82,35 +82,66 @@ function genManyFields(fieldInfoArray) {
  */
 function getStructInfoFromElements(elements) {
     const info = [];
+    let currentStruct = null;
+    let hasParagraph = false;
+    let hasTable = false;
+
     elements.forEach(elem => {
-        if (elem.tagName === 'H3') {
-            // If the element is an h3, create a new section
-            info.push({
-                typeName: elem.innerText,
-                typeDoc: [],
-                fields: []
-            });
-        } else if (elem.tagName === 'H4') {
-            // If the element is an h4, create a new subsection within the last h3 section
-            info.push({
+        if (elem.tagName === 'H4') {
+            // If there's an existing struct that didn't meet all criteria, discard it
+            if (currentStruct && (!hasParagraph || !hasTable)) {
+                console.error(`Incomplete struct found for type '${currentStruct.typeName}'. Excluding this StructInfo.`);
+                info.pop();
+            }
+            // Reset flags and start a new struct
+            hasParagraph = false;
+            hasTable = false;
+            currentStruct = {
                 typeName: elem.innerText,
                 typeDoc: '',
                 fields: []
-            });
-        } else if (elem.tagName === 'P') {
+            };
+            info.push(currentStruct);
+        } else if (elem.tagName === 'P' && currentStruct) {
             // If the element is a p, add it to the current h4 subsection's typeDoc
-            if (info.length > 0) {
-                info[info.length - 1].typeDoc += elem.innerText + ' ';
-            }
-        } else if (elem.classList.contains('table')) {
-            // If the element is a table, parse the table rows and add to the current h4 subsection's fields
-            const tableData = getStructFieldInfoFromTable(elem);
-            if (info.length > 0) {
-                info[info.length - 1].fields = tableData;
+            currentStruct.typeDoc += elem.innerText;
+            hasParagraph = true;
+        } else if (elem.classList.contains('table') && currentStruct) {
+            // If the element is a table, validate and parse the table rows, then add to the current h4 subsection's fields
+            if (isValidTableOfType(elem)) {
+                const tableData = getStructFieldInfoFromTable(elem);
+                currentStruct.fields = tableData;
+                hasTable = true;
+            } else {
+                console.error(`Invalid table format found for type '${currentStruct.typeName}'. Excluding this StructInfo.`);
+                // Remove the currentStruct from info if table format is invalid
+                info.pop();
+                currentStruct = null;
             }
         }
     });
+
+    // Final check for the last struct
+    if (currentStruct && (!hasParagraph || !hasTable)) {
+        console.error(`Incomplete struct found for type ${currentStruct.typeName}. Excluding this StructInfo.`);
+        info.pop();
+    }
+
     return info;
+}
+
+/**
+ * Validate if the given table has the correct headers.
+ * 
+ * This function checks if the table has exactly three headers and 
+ * if those headers are "Field", "Type", and "Description" respectively.
+ * 
+ * @param {HTMLTableElement} table - The table element to validate.
+ * @returns {boolean} - True if the table is valid, false otherwise.
+ */
+function isValidTableOfType(table) {
+    const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.innerText.trim());
+    return headers.length === 3 && headers[0] === 'Field' && headers[1] === 'Type' && headers[2] === 'Description';
 }
 
 /**
@@ -221,7 +252,7 @@ function genCode(structInfoArray) {
  * @returns {boolean} - Passed or not.
  */
 function isGoodTypeName(str) {
-    const typeNameRegex = /^[A-Z][a-z]*([A-Z][a-z]*)*$/;
+    const typeNameRegex = /^[A-Z][a-z0-9]*([A-Z][a-z0-9]*)*$/;
     return typeNameRegex.test(str);
 }
 
@@ -244,8 +275,36 @@ function replaceArrayOf(input) {
 }
 
 const devPageContent = document.querySelector('#dev_page_content');
-const elements = devPageContent.querySelectorAll('h3, h4, p, .table');
-const result = getStructInfoFromElements(elements, getStructFieldInfoFromTable);
-const goodResult = ignoreBad(result);
-console.log(`Generate ${goodResult.length} types, they are ${goodResult.map(e => e.typeName)}`);
-console.log(genCode(goodResult));
+
+/**
+ * Get elements in the range between "Available types" and "Available methods".
+ * 
+ * This function creates a range between the H3 elements with text content "Available types"
+ * and "Available methods", then retrieves all child elements within that range that match 
+ * the selectors 'h4', 'p', and '.table'.
+ * 
+ * @returns {Element[]} - An array of elements within the specified range.
+ */
+function getElementsInRangeAvailableTypes() {
+    const range = document.createRange();
+    const startTitle = Array.from(devPageContent.querySelectorAll('h3')).find(h3 => 
+        h3.textContent === 'Available types'
+    );
+    const endTitle = Array.from(devPageContent.querySelectorAll('h3')).find(h3 => 
+        h3.textContent === 'Available methods'
+    );
+    if (!startTitle || !endTitle) return [];
+
+    range.setStartAfter(startTitle);
+    range.setEndBefore(endTitle);
+    
+    const elements = Array.from(range.cloneContents().children)
+        .filter(el => el.matches('h4, p, .table'));
+
+    return elements;
+}
+
+const availableTypes = getStructInfoFromElements(getElementsInRangeAvailableTypes());
+console.log(availableTypes);
+console.log(`Generate ${availableTypes.length} types, they are ${availableTypes.map(e => e.typeName)}`);
+console.log(genCode(availableTypes));
